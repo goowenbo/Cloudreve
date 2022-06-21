@@ -13,10 +13,11 @@ import (
 	"github.com/cloudreve/Cloudreve/v3/pkg/mq"
 	"github.com/cloudreve/Cloudreve/v3/pkg/task"
 	"github.com/gin-gonic/gin"
+	"io/fs"
 )
 
 // Init 初始化启动
-func Init(path string) {
+func Init(path string, statics fs.FS) {
 	InitApplication()
 	conf.Init(path)
 	// Debug 关闭时，切换为生产模式
@@ -37,7 +38,7 @@ func Init(path string) {
 		{
 			"both",
 			func() {
-				cache.Init()
+				cache.Init(conf.SystemConfig.Mode == "slave")
 			},
 		},
 		{
@@ -79,7 +80,7 @@ func Init(path string) {
 		{
 			"master",
 			func() {
-				InitStatic()
+				InitStatic(statics)
 			},
 		},
 		{

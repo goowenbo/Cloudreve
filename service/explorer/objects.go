@@ -2,9 +2,9 @@ package explorer
 
 import (
 	"context"
+	"encoding/gob"
 	"fmt"
 	"math"
-	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -13,7 +13,6 @@ import (
 	"github.com/cloudreve/Cloudreve/v3/pkg/auth"
 	"github.com/cloudreve/Cloudreve/v3/pkg/cache"
 	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem"
-	"github.com/cloudreve/Cloudreve/v3/pkg/filesystem/fsctx"
 	"github.com/cloudreve/Cloudreve/v3/pkg/hashid"
 	"github.com/cloudreve/Cloudreve/v3/pkg/serializer"
 	"github.com/cloudreve/Cloudreve/v3/pkg/task"
@@ -56,8 +55,9 @@ type ItemCompressService struct {
 
 // ItemDecompressService 文件解压缩任务服务
 type ItemDecompressService struct {
-	Src string `json:"src"`
-	Dst string `json:"dst" binding:"required,min=1,max=65535"`
+	Src      string `json:"src"`
+	Dst      string `json:"dst" binding:"required,min=1,max=65535"`
+	Encoding string `json:"encoding"`
 }
 
 // ItemPropertyService 获取对象属性服务
@@ -65,6 +65,10 @@ type ItemPropertyService struct {
 	ID        string `binding:"required"`
 	TraceRoot bool   `form:"trace_root"`
 	IsFolder  bool   `form:"is_folder"`
+}
+
+func init() {
+	gob.Register(ItemIDService{})
 }
 
 // Raw 批量解码HashID，获取原始ID
@@ -124,13 +128,23 @@ func (service *ItemDecompressService) CreateDecompressTask(c *gin.Context) seria
 		return serializer.Err(serializer.CodeParamErr, "文件太大", nil)
 	}
 
-	// 必须是zip压缩包
-	if !strings.HasSuffix(file.Name, ".zip") {
-		return serializer.Err(serializer.CodeParamErr, "只能解压 ZIP 格式的压缩文件", nil)
+	// 支持的压缩格式后缀
+	var (
+		suffixes = []string{".zip", ".gz", ".xz", ".tar", ".rar"}
+		matched  bool
+	)
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(file.Name, suffix) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return serializer.Err(serializer.CodeParamErr, "不支持该格式的压缩文件", nil)
 	}
 
 	// 创建任务
-	job, err := task.NewDecompressTask(fs.User, service.Src, service.Dst)
+	job, err := task.NewDecompressTask(fs.User, service.Src, service.Dst, service.Encoding)
 	if err != nil {
 		return serializer.Err(serializer.CodeNotSet, "任务创建失败", err)
 	}
@@ -194,7 +208,7 @@ func (service *ItemCompressService) CreateCompressTask(c *gin.Context) serialize
 	}
 
 	// 文件尺寸限制
-	if fs.User.Group.OptionsSerialized.DecompressSize != 0 && totalSize > fs.User.Group.
+	if fs.User.Group.OptionsSerialized.CompressSize != 0 && totalSize > fs.User.Group.
 		OptionsSerialized.CompressSize {
 		return serializer.Err(serializer.CodeParamErr, "文件太大", nil)
 	}
@@ -232,37 +246,20 @@ func (service *ItemIDService) Archive(ctx context.Context, c *gin.Context) seria
 		return serializer.Err(serializer.CodeGroupNotAllowed, "当前用户组无法进行此操作", nil)
 	}
 
-	// 开始压缩
-	ctx = context.WithValue(ctx, fsctx.GinCtx, c)
-	items := service.Raw()
-	zipFile, err := fs.Compress(ctx, items.Dirs, items.Items, true)
-	if err != nil {
-		return serializer.Err(serializer.CodeNotSet, "无法创建压缩文件", err)
-	}
-
-	// 生成一次性压缩文件下载地址
-	siteURL, err := url.Parse(model.GetSettingByName("siteURL"))
-	if err != nil {
-		return serializer.Err(serializer.CodeNotSet, "无法解析站点URL", err)
-	}
-	zipID := util.RandStringRunes(16)
+	// 创建打包下载会话
 	ttl := model.GetIntSetting("archive_timeout", 30)
-	signedURI, err := auth.SignURI(
+	downloadSessionID := util.RandStringRunes(16)
+	cache.Set("archive_"+downloadSessionID, *service, ttl)
+	cache.Set("archive_user_"+downloadSessionID, *fs.User, ttl)
+	signURL, err := auth.SignURI(
 		auth.General,
-		fmt.Sprintf("/api/v3/file/archive/%s/archive.zip", zipID),
-		time.Now().Unix()+int64(ttl),
+		fmt.Sprintf("/api/v3/file/archive/%s/archive.zip", downloadSessionID),
+		int64(ttl),
 	)
-	finalURL := siteURL.ResolveReference(signedURI).String()
-
-	// 将压缩文件记录存入缓存
-	err = cache.Set("archive_"+zipID, zipFile, ttl)
-	if err != nil {
-		return serializer.Err(serializer.CodeIOFailed, "无法写入缓存", err)
-	}
 
 	return serializer.Response{
 		Code: 0,
-		Data: finalURL,
+		Data: signURL.String(),
 	}
 }
 
@@ -405,11 +402,6 @@ func (service *ItemPropertyService) GetProperty(ctx context.Context, c *gin.Cont
 			return serializer.Err(serializer.CodeNotFound, "对象不存在", err)
 		}
 
-		// 如果对象是目录, 先尝试返回缓存结果
-		if cacheRes, ok := cache.Get(fmt.Sprintf("folder_props_%d", res)); ok {
-			return serializer.Response{Data: cacheRes.(serializer.ObjectProps)}
-		}
-
 		folder, err := model.GetFoldersByIDs([]uint{res}, user.ID)
 		if err != nil {
 			return serializer.DBErr("找不到目录", err)
@@ -417,6 +409,14 @@ func (service *ItemPropertyService) GetProperty(ctx context.Context, c *gin.Cont
 
 		props.CreatedAt = folder[0].CreatedAt
 		props.UpdatedAt = folder[0].UpdatedAt
+
+		// 如果对象是目录, 先尝试返回缓存结果
+		if cacheRes, ok := cache.Get(fmt.Sprintf("folder_props_%d", res)); ok {
+			res := cacheRes.(serializer.ObjectProps)
+			res.CreatedAt = props.CreatedAt
+			res.UpdatedAt = props.UpdatedAt
+			return serializer.Response{Data: res}
+		}
 
 		// 统计子目录
 		childFolders, err := model.GetRecursiveChildFolder([]uint{folder[0].ID},

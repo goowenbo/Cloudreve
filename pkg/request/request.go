@@ -7,7 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"path"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -34,13 +34,15 @@ type Client interface {
 
 // HTTPClient 实现 Client 接口
 type HTTPClient struct {
-	mu      sync.Mutex
-	options *options
+	mu         sync.Mutex
+	options    *options
+	tpsLimiter TPSLimiter
 }
 
 func NewClient(opts ...Option) Client {
 	client := &HTTPClient{
-		options: newDefaultOption(),
+		options:    newDefaultOption(),
+		tpsLimiter: globalTPSLimiter,
 	}
 
 	for _, o := range opts {
@@ -51,7 +53,7 @@ func NewClient(opts ...Option) Client {
 }
 
 // Request 发送HTTP请求
-func (c HTTPClient) Request(method, target string, body io.Reader, opts ...Option) *Response {
+func (c *HTTPClient) Request(method, target string, body io.Reader, opts ...Option) *Response {
 	// 应用额外设置
 	c.mu.Lock()
 	options := *c.options
@@ -70,9 +72,13 @@ func (c HTTPClient) Request(method, target string, body io.Reader, opts ...Optio
 
 	// 确定请求URL
 	if options.endpoint != nil {
+		targetPath, err := url.Parse(target)
+		if err != nil {
+			return &Response{Err: err}
+		}
+
 		targetURL := *options.endpoint
-		targetURL.Path = path.Join(targetURL.Path, target)
-		target = targetURL.String()
+		target = targetURL.ResolveReference(targetPath).String()
 	}
 
 	// 创建请求
@@ -97,13 +103,13 @@ func (c HTTPClient) Request(method, target string, body io.Reader, opts ...Optio
 	}
 
 	if options.masterMeta && conf.SystemConfig.Mode == "master" {
-		req.Header.Add("X-Cr-Site-Url", model.GetSiteURL().String())
-		req.Header.Add("X-Cr-Site-Id", model.GetSettingByName("siteID"))
-		req.Header.Add("X-Cr-Cloudreve-Version", conf.BackendVersion)
+		req.Header.Add(auth.CrHeaderPrefix+"Site-Url", model.GetSiteURL().String())
+		req.Header.Add(auth.CrHeaderPrefix+"Site-Id", model.GetSettingByName("siteID"))
+		req.Header.Add(auth.CrHeaderPrefix+"Cloudreve-Version", conf.BackendVersion)
 	}
 
 	if options.slaveNodeID != "" && conf.SystemConfig.Mode == "slave" {
-		req.Header.Add("X-Cr-Node-Id", options.slaveNodeID)
+		req.Header.Add(auth.CrHeaderPrefix+"Node-Id", options.slaveNodeID)
 	}
 
 	if options.contentLength != -1 {
@@ -120,6 +126,10 @@ func (c HTTPClient) Request(method, target string, body io.Reader, opts ...Optio
 				req.URL = resURL
 			}
 		}
+	}
+
+	if options.tps > 0 {
+		c.tpsLimiter.Limit(options.ctx, options.tpsLimiterToken, options.tps, options.tpsBurst)
 	}
 
 	// 发送请求
@@ -248,9 +258,6 @@ func (instance NopRSCloser) Seek(offset int64, whence int) (int64, error) {
 // BlackHole 将客户端发来的数据放入黑洞
 func BlackHole(r io.Reader) {
 	if !model.IsTrueVal(model.GetSettingByName("reset_after_upload_failed")) {
-		_, err := io.Copy(ioutil.Discard, r)
-		if err != nil {
-			util.Log().Debug("黑洞数据出错，%s", err)
-		}
+		io.Copy(ioutil.Discard, r)
 	}
 }

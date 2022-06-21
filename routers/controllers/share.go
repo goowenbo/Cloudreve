@@ -100,7 +100,7 @@ func PreviewShare(c *gin.Context) {
 		res := service.PreviewContent(ctx, c, false)
 		// 是否需要重定向
 		if res.Code == -301 {
-			c.Redirect(301, res.Data.(string))
+			c.Redirect(302, res.Data.(string))
 			return
 		}
 		// 是否有错误发生
@@ -182,6 +182,23 @@ func ListSharedFolder(c *gin.Context) {
 	} else {
 		c.JSON(200, ErrorResponse(err))
 	}
+}
+
+// SearchSharedFolder 搜索分享的目录下的对象
+func SearchSharedFolder(c *gin.Context) {
+	var service share.SearchService
+	if err := c.ShouldBindUri(&service); err != nil {
+		c.JSON(200, ErrorResponse(err))
+		return
+	}
+
+	if err := c.ShouldBindQuery(&service); err != nil {
+		c.JSON(200, ErrorResponse(err))
+		return
+	}
+
+	res := service.Search(c)
+	c.JSON(200, res)
 }
 
 // ArchiveShare 打包要下载的分享

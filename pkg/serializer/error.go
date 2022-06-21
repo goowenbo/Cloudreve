@@ -54,10 +54,10 @@ const (
 	CodeNoPermissionErr = 403
 	// CodeNotFound 资源未找到
 	CodeNotFound = 404
+	// CodeConflict 资源冲突
+	CodeConflict = 409
 	// CodeUploadFailed 上传出错
 	CodeUploadFailed = 40002
-	// CodeCredentialInvalid 凭证无效
-	CodeCredentialInvalid = 40001
 	// CodeCreateFolderFailed 目录创建失败
 	CodeCreateFolderFailed = 40003
 	// CodeObjectExist 对象已存在
@@ -72,6 +72,52 @@ const (
 	CodeAdminRequired = 40008
 	// CodeMasterNotFound 主机节点未注册
 	CodeMasterNotFound = 40009
+	// CodeUploadSessionExpired 上传会话已过期
+	CodeUploadSessionExpired = 400011
+	// CodeInvalidChunkIndex 无效的分片序号
+	CodeInvalidChunkIndex = 400012
+	// CodeInvalidContentLength 无效的正文长度
+	CodeInvalidContentLength = 400013
+	// CodeBatchSourceSize 超出批量获取外链限制
+	CodeBatchSourceSize = 40014
+	// CodeBatchAria2Size 超出最大 Aria2 任务数量限制
+	CodeBatchAria2Size = 40015
+	// CodeParentNotExist 父目录不存在
+	CodeParentNotExist = 40016
+	// CodeUserBaned 用户不活跃
+	CodeUserBaned = 40017
+	// CodeUserNotActivated 用户不活跃
+	CodeUserNotActivated = 40018
+	// CodeFeatureNotEnabled 此功能未开启
+	CodeFeatureNotEnabled = 40019
+	// CodeCredentialInvalid 凭证无效
+	CodeCredentialInvalid = 40020
+	// CodeUserNotFound 用户不存在
+	CodeUserNotFound = 40021
+	// Code2FACodeErr 二步验证代码错误
+	Code2FACodeErr = 40022
+	// CodeLoginSessionNotExist 登录会话不存在
+	CodeLoginSessionNotExist = 40023
+	// CodeInitializeAuthn 无法初始化 WebAuthn
+	CodeInitializeAuthn = 40024
+	// CodeWebAuthnCredentialError WebAuthn 凭证无效
+	CodeWebAuthnCredentialError = 40025
+	// CodeCaptchaError 验证码错误
+	CodeCaptchaError = 40026
+	// CodeCaptchaRefreshNeeded 验证码需要刷新
+	CodeCaptchaRefreshNeeded = 40027
+	// CodeFailedSendEmail 邮件发送失败
+	CodeFailedSendEmail = 40028
+	// CodeInvalidTempLink 临时链接无效
+	CodeInvalidTempLink = 40029
+	// CodeTempLinkExpired 临时链接过期
+	CodeTempLinkExpired = 40030
+	// CodeEmailExisted 邮箱已被使用
+	CodeEmailExisted = 40032
+	// CodeEmailSent 邮箱已重新发送
+	CodeEmailSent = 40033
+	// CodeUserCannotActivate 用户无法激活
+	CodeUserCannotActivate = 40034
 	// CodeDBError 数据库操作失败
 	CodeDBError = 50001
 	// CodeEncryptError 加密失败

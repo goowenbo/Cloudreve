@@ -1,12 +1,19 @@
 package main
 
 import (
+	_ "embed"
 	"flag"
+	"io"
+	"io/fs"
+	"os"
+	"strings"
 
 	"github.com/cloudreve/Cloudreve/v3/bootstrap"
 	"github.com/cloudreve/Cloudreve/v3/pkg/conf"
 	"github.com/cloudreve/Cloudreve/v3/pkg/util"
 	"github.com/cloudreve/Cloudreve/v3/routers"
+
+	"github.com/mholt/archiver/v4"
 )
 
 var (
@@ -15,18 +22,28 @@ var (
 	scriptName string
 )
 
+//go:embed assets.zip
+var staticZip string
+
+var staticFS fs.FS
+
 func init() {
 	flag.StringVar(&confPath, "c", util.RelativePath("conf.ini"), "配置文件路径")
 	flag.BoolVar(&isEject, "eject", false, "导出内置静态资源")
 	flag.StringVar(&scriptName, "database-script", "", "运行内置数据库助手脚本")
 	flag.Parse()
-	bootstrap.Init(confPath)
+
+	staticFS = archiver.ArchiveFS{
+		Stream: io.NewSectionReader(strings.NewReader(staticZip), 0, int64(len(staticZip))),
+		Format: archiver.Zip{},
+	}
+	bootstrap.Init(confPath, staticFS)
 }
 
 func main() {
 	if isEject {
 		// 开始导出内置静态资源文件
-		bootstrap.Eject()
+		bootstrap.Eject(staticFS)
 		return
 	}
 
@@ -51,6 +68,15 @@ func main() {
 
 	// 如果启用了Unix
 	if conf.UnixConfig.Listen != "" {
+		// delete socket file before listening
+		if _, err := os.Stat(conf.UnixConfig.Listen); err == nil {
+			if err = os.Remove(conf.UnixConfig.Listen); err != nil {
+				util.Log().Error("删除 socket 文件错误, %s", err)
+				return
+			}
+		}
+
+		api.TrustedPlatform = conf.UnixConfig.ProxyHeader
 		util.Log().Info("开始监听 %s", conf.UnixConfig.Listen)
 		if err := api.RunUnix(conf.UnixConfig.Listen); err != nil {
 			util.Log().Error("无法监听[%s]，%s", conf.UnixConfig.Listen, err)
